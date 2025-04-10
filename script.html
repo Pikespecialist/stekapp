@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Digitaal Visboek</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background: #eef5f9;
+    }
+    h1 {
+      text-align: center;
+    }
+    #map {
+      height: 400px;
+      margin-bottom: 1rem;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    }
+    form {
+      background: white;
+      padding: 1rem;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      max-width: 600px;
+      margin: auto;
+      display: none;
+    }
+    label {
+      display: block;
+      margin-top: 1rem;
+    }
+    input, textarea, select {
+      width: 100%;
+      padding: 0.5rem;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+    }
+    #logboek {
+      margin-top: 2rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1rem;
+    }
+    .vangst {
+      background: white;
+      padding: 1rem;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    .vangst .hoofdbeeld {
+      width: 100%;
+      max-height: 300px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+    }
+    .vangst .thumbs img {
+      width: 60px;
+      margin: 3px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    .vangst p {
+      margin: 0.25rem 0;
+      font-size: 0.9rem;
+    }
+    .lightbox {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+    .lightbox img {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 10px;
+    }
+
+    /* Legenda styling voor de kaart */
+    .legend {
+      background-color: white;
+      padding: 0.75rem;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .legend h4 {
+      margin: 0 0 0.5rem 0;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 0.25rem;
+    }
+    .legend-item span {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 6px;
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Digitaal Visboek</h1>
+  <div id="map"></div>
+
+  <form id="vangstForm">
+    <label>Vissoort <input type="text" id="soort" required /></label>
+    <label>Lengte/gewicht <input type="text" id="maat" /></label>
+    <label>Datum/tijd <input type="datetime-local" id="datum" /></label>
+    <label>Locatie <input type="text" id="locatie" readonly placeholder="Klik op de kaart" /></label>
+    <label>Aas/techniek <input type="text" id="aas" /></label>
+    <label>Weersomstandigheden <input type="text" id="weer" /></label>
+    <label>Opmerkingen <textarea id="opmerkingen"></textarea></label>
+    <label>Foto's <input type="file" id="fotos" multiple accept="image/*" /></label>
+    <button type="submit">Toevoegen</button>
+  </form>
+
+  <div id="logboek"></div>
+
+  <div class="lightbox" id="lightbox"><img src="" /></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const form = document.getElementById('vangstForm');
+    const logboek = document.getElementById('logboek');
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = lightbox.querySelector('img');
+    const locatieInput = document.getElementById('locatie');
+    const datumInput = document.getElementById('datum');
+
+    let markers = [];
+    let currentMarker = null;
+
+    const kaart = L.map('map').setView([52.1, 5.1], 8);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(kaart);
+
+    // Voeg marker toe en formulier tonen bij klikken op de kaart
+    kaart.on('click', function(e) {
+      const latlng = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+      locatieInput.value = latlng;
+
+      // Verwijder eerdere marker als deze er is
+      if (currentMarker) {
+        kaart.removeLayer(currentMarker);
+      }
+
+      // Voeg nieuwe marker toe
+      currentMarker = L.marker(e.latlng).addTo(kaart);
+      
+      // Toon formulier en vul datum automatisch in met lokale tijd
+      form.style.display = 'block';
+      const localDate = new Date().toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' });
+      const localDateTime = new Date(localDate).toISOString().slice(0, 16); // Format: YYYY-MM-DDTHH:MM
+      datumInput.value = localDateTime;
+    });
+
+    let vangsten = JSON.parse(localStorage.getItem('vangsten')) || [];
+
+    // Functie om cirkelmarkers toe te voegen voor opgeslagen vangsten met thumbnail
+    function voegMarkersToe() {
+      markers.forEach(marker => kaart.removeLayer(marker));
+      markers = [];
+
+      vangsten.forEach((vangst, index) => {
+        const locatie = vangst.locatie.split(',').map(coord => parseFloat(coord.trim()));
+        if (locatie.length === 2) {
+          let markerColor;
+          switch(vangst.soort.toLowerCase()) {
+            case 'snoek':
+              markerColor = '#0000FF'; // Blauw
+              break;
+            case 'snoekbaars':
+              markerColor = '#800080'; // Paars
+              break;
+            case 'baars':
+              markerColor = '#FFFF00'; // Geel
+              break;
+            case 'meerval':
+              markerColor = '#FF0000'; // Rood
+              break;
+            case 'roofblei':
+              markerColor = '#000000'; // Zwart
+              break;
+            case 'karper':
+              markerColor = '#008000'; // Groen
+              break;
+            default:
+              markerColor = '#000000';
+          }
+
+          const circleMarker = L.circleMarker(locatie, { radius: 10, color: markerColor, fillColor: markerColor, fillOpacity: 0.6 })
+            .addTo(kaart)
+            .bindPopup(`
+              <strong>${vangst.soort}</strong>
+              <br>
+              <img src="${vangst.fotos[0]}" width="60" height="60" style="object-fit: cover;" />
+              <p>${vangst.datum}</p>
+            `);
+
+          markers.push(circleMarker);
+        }
+      });
+    }
+
+    function toonVangsten() {
+      logboek.innerHTML = '';
+      
+      // Sorteer de vangsten op datum, van nieuwste naar oudste
+      vangsten.sort((a, b) => new Date(b.datum) - new Date(a.datum));
+
+      vangsten.forEach((vangst, index) => {
+        const div = document.createElement('div');
+        div.className = 'vangst';
+
+        const hoofdFoto = vangst.fotos.length > 0 ? `<img class="hoofdbeeld" src="${vangst.fotos[0]}" />` : '';
+        const andereFotos = vangst.fotos.slice(1).map(f => `<img src="${f}" />`).join(' ');
+
+        div.innerHTML = `
+          ${hoofdFoto}
+          <div class="thumbs">${andereFotos}</div>
+          <p><strong>Vissoort:</strong> ${vangst.soort}</p>
+          <p><strong>Maat:</strong> ${vangst.maat}</p>
+          <p><strong>Datum:</strong> ${vangst.datum}</p>
+          <p><strong>Locatie:</strong> ${vangst.locatie}</p>
+          <p><strong>Aas:</strong> ${vangst.aas}</p>
+          <p><strong>Weer:</strong> ${vangst.weer}</p>
+          <p><strong>Opmerkingen:</strong> ${vangst.opmerkingen}</p>
+          <button class="remove-btn" data-index="${index}">Verwijder</button>
+        `;
+        logboek.appendChild(div);
+      });
+
+      // Event listener voor de verwijderknop
+      const removeBtns = document.querySelectorAll('.remove-btn');
+      removeBtns.forEach(btn => {
+        btn.addEventListener('click', e => {
+          const index = e.target.getAttribute('data-index');
+          vangsten.splice(index, 1);
+          localStorage.setItem('vangsten', JSON.stringify(vangsten));
+          toonVangsten();
+          voegMarkersToe();
+        });
+      });
+    }
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+
+      const soort = document.getElementById('soort').value;
+      const maat = document.getElementById('maat').value;
+      const datum = document.getElementById('datum').value;
+      const locatie = document.getElementById('locatie').value;
+      const aas = document.getElementById('aas').value;
+      const weer = document.getElementById('weer').value;
+      const opmerkingen = document.getElementById('opmerkingen').value;
+      const files = document.getElementById('fotos').files;
+
+      const readerPromises = Array.from(files).map(file => {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        });
+      });
+
+      Promise.all(readerPromises).then(fotos => {
+        vangsten.push({ soort, maat, datum, locatie, aas, weer, opmerkingen, fotos });
+        localStorage.setItem('vangsten', JSON.stringify(vangsten));
+        form.reset();
+        form.style.display = 'none';  // Verberg formulier
+        if (currentMarker) kaart.removeLayer(currentMarker);
+        toonVangsten();
+        voegMarkersToe();
+      });
+    });
+
+    logboek.addEventListener('click', e => {
+      if (e.target.tagName === 'IMG') {
+        lightbox.style.display = 'flex';
+        lightboxImg.src = e.target.src;
+      }
+    });
+
+    lightbox.addEventListener('click', () => {
+      lightbox.style.display = 'none';
+    });
+
+    // Voeg de legenda toe aan de kaart
+    const legendaControl = L.control({ position: 'topright' });
+
+    legendaControl.onAdd = function () {
+      const div = L.DomUtil.create('div', 'legend');
+      div.innerHTML = `
+        <h4>Vissoorten</h4>
+        <div class="legend-item"><span style="background-color: #0000FF;"></span> Snoek</div>
+        <div class="legend-item"><span style="background-color: #800080;"></span> Snoekbaars</div>
+        <div class="legend-item"><span style="background-color: #FFFF00;"></span> Baars</div>
+        <div class="legend-item"><span style="background-color: #FF0000;"></span> Meerval</div>
+        <div class="legend-item"><span style="background-color: #000000;"></span> Roofblei</div>
+        <div class="legend-item"><span style="background-color: #008000;"></span> Karper</div>
+      `;
+      return div;
+    };
+
+    legendaControl.addTo(kaart);
+
+    voegMarkersToe();
+    toonVangsten();
+  </script>
+</body>
+</html>
